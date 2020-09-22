@@ -4,7 +4,7 @@
 	<groupId>andytill</groupId>
 	<artifactId>jinterface</artifactId>
 	<packaging>jar</packaging>
-	<version>1.6</version>
+	<version>1.11</version>
 	<name>jinterface</name>
 	<description>
   Jinterface Java package contains java classes, which help you integrate programs written in Java with Erlang.

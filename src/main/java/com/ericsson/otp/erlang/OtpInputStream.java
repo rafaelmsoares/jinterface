@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2013. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2016. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -236,6 +236,20 @@ public class OtpInputStream extends ByteArrayInputStream {
         }
         return (b[0] << 24 & 0xff000000) + (b[1] << 16 & 0xff0000)
                 + (b[2] << 8 & 0xff00) + (b[3] & 0xff);
+    }
+
+    /**
+     * Read a eight byte big endian integer from the stream.
+     *
+     * @return the bytes read, converted from big endian to a long integer.
+     *
+     * @exception OtpErlangDecodeException
+     *                if the next byte cannot be read.
+     */
+    public long read8BE() throws OtpErlangDecodeException {
+        long high = read4BE();
+        long low = read4BE();
+        return (high << 32) | (low & 0xffffffff);
     }
 
     /**
@@ -601,7 +615,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the integer value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as a
+     *                if the next term in the stream cannot be represented as a
      *                positive integer.
      */
     public int read_uint() throws OtpErlangDecodeException {
@@ -622,7 +636,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the integer value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as
+     *                if the next term in the stream cannot be represented as
      *                an integer.
      */
     public int read_int() throws OtpErlangDecodeException {
@@ -643,7 +657,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the short value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as a
+     *                if the next term in the stream cannot be represented as a
      *                positive short.
      */
     public short read_ushort() throws OtpErlangDecodeException {
@@ -664,7 +678,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the short value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as a
+     *                if the next term in the stream cannot be represented as a
      *                short.
      */
     public short read_short() throws OtpErlangDecodeException {
@@ -685,7 +699,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the long value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as a
+     *                if the next term in the stream cannot be represented as a
      *                positive long.
      */
     public long read_ulong() throws OtpErlangDecodeException {
@@ -698,7 +712,7 @@ public class OtpInputStream extends ByteArrayInputStream {
      * @return the long value.
      *
      * @exception OtpErlangDecodeException
-     *                if the next term in the stream can not be represented as a
+     *                if the next term in the stream cannot be represented as a
      *                long.
      */
     public long read_long() throws OtpErlangDecodeException {
@@ -954,18 +968,23 @@ public class OtpInputStream extends ByteArrayInputStream {
 
         tag = read1skip_version();
 
-        if (tag != OtpExternal.pidTag) {
+        if (tag != OtpExternal.pidTag &&
+	    tag != OtpExternal.newPidTag) {
             throw new OtpErlangDecodeException(
                     "Wrong tag encountered, expected " + OtpExternal.pidTag
+		    + " or " + OtpExternal.newPidTag
                             + ", got " + tag);
         }
 
         node = read_atom();
-        id = read4BE() & 0x7fff; // 15 bits
-        serial = read4BE() & 0x1fff; // 13 bits
-        creation = read1() & 0x03; // 2 bits
+        id = read4BE();
+        serial = read4BE();
+	if (tag == OtpExternal.pidTag)
+	    creation = read1();
+	else
+	    creation = read4BE();
 
-        return new OtpErlangPid(node, id, serial, creation);
+        return new OtpErlangPid(tag, node, id, serial, creation);
     }
 
     /**
@@ -984,17 +1003,22 @@ public class OtpInputStream extends ByteArrayInputStream {
 
         tag = read1skip_version();
 
-        if (tag != OtpExternal.portTag) {
+        if (tag != OtpExternal.portTag &&
+	    tag != OtpExternal.newPortTag) {
             throw new OtpErlangDecodeException(
                     "Wrong tag encountered, expected " + OtpExternal.portTag
+		    + " or " + OtpExternal.newPortTag
                             + ", got " + tag);
         }
 
         node = read_atom();
-        id = read4BE() & 0xfffffff; // 28 bits
-        creation = read1() & 0x03; // 2 bits
+        id = read4BE();
+	if (tag == OtpExternal.portTag)
+	    creation = read1();
+	else
+	    creation = read4BE();
 
-        return new OtpErlangPort(node, id, creation);
+        return new OtpErlangPort(tag, node, id, creation);
     }
 
     /**
@@ -1021,16 +1045,23 @@ public class OtpInputStream extends ByteArrayInputStream {
             return new OtpErlangRef(node, id, creation);
 
         case OtpExternal.newRefTag:
+        case OtpExternal.newerRefTag:
             final int arity = read2BE();
+            if (arity > 3) {
+		throw new OtpErlangDecodeException(
+		    "Ref arity " + arity + " too large ");
+	    }
             node = read_atom();
-            creation = read1() & 0x03; // 2 bits
+	    if (tag == OtpExternal.newRefTag)
+		creation = read1();
+	    else
+		creation = read4BE();
 
             final int[] ids = new int[arity];
             for (int i = 0; i < arity; i++) {
                 ids[i] = read4BE();
             }
-            ids[0] &= 0x3ffff; // first id gets truncated to 18 bits
-            return new OtpErlangRef(node, ids, creation);
+            return new OtpErlangRef(tag, node, ids, creation);
 
         default:
             throw new OtpErlangDecodeException(
@@ -1200,15 +1231,18 @@ public class OtpInputStream extends ByteArrayInputStream {
 
         case OtpExternal.refTag:
         case OtpExternal.newRefTag:
+        case OtpExternal.newerRefTag:
             return new OtpErlangRef(this);
 
         case OtpExternal.mapTag:
             return new OtpErlangMap(this);
 
         case OtpExternal.portTag:
+        case OtpExternal.newPortTag:
             return new OtpErlangPort(this);
 
         case OtpExternal.pidTag:
+        case OtpExternal.newPidTag:
             return new OtpErlangPid(this);
 
         case OtpExternal.stringTag:
@@ -1242,6 +1276,9 @@ public class OtpInputStream extends ByteArrayInputStream {
         case OtpExternal.newFunTag:
         case OtpExternal.funTag:
             return new OtpErlangFun(this);
+
+	case OtpExternal.externalFunTag:
+	    return new OtpErlangExternalFun(this);
 
         default:
             throw new OtpErlangDecodeException("Uknown data type: " + tag);

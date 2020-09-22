@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2013. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2017. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -106,9 +106,9 @@ public class OtpOutputStream extends ByteArrayOutputStream {
     }
 
     /**
-     * Trims the capacity of this <tt>OtpOutputStream</tt> instance to be the
+     * Trims the capacity of this <code>OtpOutputStream</code> instance to be the
      * buffer's current size. An application can use this operation to minimize
-     * the storage of an <tt>OtpOutputStream</tt> instance.
+     * the storage of an <code>OtpOutputStream</code> instance.
      */
     public void trimToSize() {
         resize(super.count);
@@ -125,7 +125,7 @@ public class OtpOutputStream extends ByteArrayOutputStream {
     }
 
     /**
-     * Increases the capacity of this <tt>OtpOutputStream</tt> instance, if
+     * Increases the capacity of this <code>OtpOutputStream</code> instance, if
      * necessary, to ensure that it can hold at least the number of elements
      * specified by the minimum capacity argument.
      *
@@ -403,7 +403,6 @@ public class OtpOutputStream extends ByteArrayOutputStream {
     public void write_atom(final String atom) {
         String enc_atom;
         byte[] bytes;
-        boolean isLatin1 = true;
 
         if (atom.codePointCount(0, atom.length()) <= OtpExternal.maxAtomLength) {
             enc_atom = atom;
@@ -416,29 +415,15 @@ public class OtpOutputStream extends ByteArrayOutputStream {
                     OtpExternal.maxAtomLength);
         }
 
-        for (int offset = 0; offset < enc_atom.length();) {
-            final int cp = enc_atom.codePointAt(offset);
-            if ((cp & ~0xFF) != 0) {
-                isLatin1 = false;
-                break;
-            }
-            offset += Character.charCount(cp);
-        }
         try {
-            if (isLatin1) {
-                bytes = enc_atom.getBytes("ISO-8859-1");
-                write1(OtpExternal.atomTag);
-                write2BE(bytes.length);
+            bytes = enc_atom.getBytes("UTF-8");
+            final int length = bytes.length;
+            if (length < 256) {
+                write1(OtpExternal.smallAtomUtf8Tag);
+                write1(length);
             } else {
-                bytes = enc_atom.getBytes("UTF-8");
-                final int length = bytes.length;
-                if (length < 256) {
-                    write1(OtpExternal.smallAtomUtf8Tag);
-                    write1(length);
-                } else {
-                    write1(OtpExternal.atomUtf8Tag);
-                    write2BE(length);
-                }
+                write1(OtpExternal.atomUtf8Tag);
+                write2BE(length);
             }
             writeN(bytes);
         } catch (final java.io.UnsupportedEncodingException e) {
@@ -728,12 +713,27 @@ public class OtpOutputStream extends ByteArrayOutputStream {
      */
     public void write_pid(final String node, final int id, final int serial,
             final int creation) {
-        write1(OtpExternal.pidTag);
-        write_atom(node);
-        write4BE(id & 0x7fff); // 15 bits
-        write4BE(serial & 0x1fff); // 13 bits
-        write1(creation & 0x3); // 2 bits
+	write1(OtpExternal.newPidTag);
+	write_atom(node);
+	write4BE(id & 0x7fff); // 15 bits
+	write4BE(serial & 0x1fff); // 13 bits
+	write1(creation & 0x3); // 2 bits
     }
+
+    /**
+     * Write an Erlang PID to the stream.
+     *
+     * @param pid
+     *            the pid
+     */
+    public void write_pid(OtpErlangPid pid) {
+	write1(OtpExternal.newPidTag);
+	write_atom(pid.node());
+	write4BE(pid.id());
+	write4BE(pid.serial());
+        write4BE(pid.creation());
+    }
+
 
     /**
      * Write an Erlang port to the stream.
@@ -745,15 +745,27 @@ public class OtpOutputStream extends ByteArrayOutputStream {
      *            an arbitrary number. Only the low order 28 bits will be used.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be
-     *            used.
-     *
+     *            another arbitrary number. Only the low order 2 bits will
+     *            be used.
      */
     public void write_port(final String node, final int id, final int creation) {
-        write1(OtpExternal.portTag);
-        write_atom(node);
-        write4BE(id & 0xfffffff); // 28 bits
-        write1(creation & 0x3); // 2 bits
+	write1(OtpExternal.newPortTag);
+	write_atom(node);
+	write4BE(id & 0xfffffff); // 28 bits
+	write1(creation & 0x3); // 2 bits
+    }
+
+    /**
+     * Write an Erlang port to the stream.
+     *
+     * @param port
+     *            the port.
+     */
+    public void write_port(OtpErlangPort port) {
+	write1(OtpExternal.newPortTag);
+	write_atom(port.node());
+	write4BE(port.id());
+        write4BE(port.creation());
     }
 
     /**
@@ -766,32 +778,31 @@ public class OtpOutputStream extends ByteArrayOutputStream {
      *            an arbitrary number. Only the low order 18 bits will be used.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be
-     *            used.
+     *            another arbitrary number.
      *
      */
     public void write_ref(final String node, final int id, final int creation) {
-        write1(OtpExternal.refTag);
-        write_atom(node);
-        write4BE(id & 0x3ffff); // 18 bits
-        write1(creation & 0x3); // 2 bits
+	/* Always encode as an extended reference; all
+	   participating parties are now expected to be
+	   able to decode extended references. */
+	int ids[] = new int[1];
+	ids[0] = id;
+	write_ref(node, ids, creation);
     }
 
     /**
-     * Write a new style (R6 and later) Erlang ref to the stream.
+     * Write an Erlang ref to the stream.
      *
      * @param node
      *            the nodename.
      *
      * @param ids
      *            an array of arbitrary numbers. Only the low order 18 bits of
-     *            the first number will be used. If the array contains only one
-     *            number, an old style ref will be written instead. At most
-     *            three numbers will be read from the array.
+     *            the first number will be used. At most three numbers
+     *            will be read from the array.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be
-     *            used.
+     *            another arbitrary number. Only the low order 2 bits will be used.
      *
      */
     public void write_ref(final String node, final int[] ids, final int creation) {
@@ -800,29 +811,42 @@ public class OtpOutputStream extends ByteArrayOutputStream {
             arity = 3; // max 3 words in ref
         }
 
-        if (arity == 1) {
-            // use old method
-            this.write_ref(node, ids[0], creation);
-        } else {
-            // r6 ref
-            write1(OtpExternal.newRefTag);
+	write1(OtpExternal.newerRefTag);
 
-            // how many id values
-            write2BE(arity);
+	// how many id values
+	write2BE(arity);
 
-            write_atom(node);
+	write_atom(node);
 
-            // note: creation BEFORE id in r6 ref
-            write1(creation & 0x3); // 2 bits
+	write1(creation & 0x3); // 2 bits
 
-            // first int gets truncated to 18 bits
-            write4BE(ids[0] & 0x3ffff);
+	// first int gets truncated to 18 bits
+	write4BE(ids[0] & 0x3ffff);
 
-            // remaining ones are left as is
-            for (int i = 1; i < arity; i++) {
-                write4BE(ids[i]);
-            }
-        }
+	// remaining ones are left as is
+	for (int i = 1; i < arity; i++) {
+	    write4BE(ids[i]);
+	}
+    }
+
+    /**
+     * Write an Erlang ref to the stream.
+     *
+     * @param ref
+     *            the reference
+     */
+    public void write_ref(OtpErlangRef ref) {
+	int[] ids = ref.ids();
+        int arity = ids.length;
+
+	write1(OtpExternal.newerRefTag);
+	write2BE(arity);
+	write_atom(ref.node());
+        write4BE(ref.creation());
+
+	for (int i = 0; i < arity; i++) {
+	    write4BE(ids[i]);
+	}
     }
 
     /**
@@ -885,7 +909,7 @@ public class OtpOutputStream extends ByteArrayOutputStream {
      * @param o
      *            the Erlang term to write.
      * @param level
-     *            the compression level (<tt>0..9</tt>)
+     *            the compression level (<code>0..9</code>)
      */
     public void write_compressed(final OtpErlangObject o, final int level) {
         @SuppressWarnings("resource")
@@ -922,8 +946,22 @@ public class OtpOutputStream extends ByteArrayOutputStream {
                 oos.writeTo(dos);
                 dos.close(); // note: closes this, too!
             } catch (final IllegalArgumentException e) {
-                // discard further un-compressed data
-                // -> if not called, there may be memory leaks!
+                /*
+                 * Discard further un-compressed data (if not called, there may
+                 * be memory leaks).
+                 *
+                 * After calling java.util.zip.Deflater.end(), the deflater
+                 * should not be used anymore, not even the close() method of
+                 * dos. Calling dos.close() before def.end() is prevented since
+                 * an unfinished DeflaterOutputStream will try to deflate its
+                 * unprocessed data to the (fixed) byte array which is prevented
+                 * by ensureCapacity() and would also unnecessarily process
+                 * further data that is discarded anyway.
+                 *
+                 * Since we are re-using the byte array of this object below, we
+                 * must not call close() in e.g. a finally block either (with or
+                 * without a call to def.end()).
+                 */
                 def.end();
                 // could not make the value smaller than originally
                 // -> reset to starting count, write uncompressed
@@ -942,11 +980,6 @@ public class OtpOutputStream extends ByteArrayOutputStream {
                         "Intermediate stream failed for Erlang object " + o);
             } finally {
                 fixedSize = Integer.MAX_VALUE;
-                try {
-                    dos.close();
-                } catch (final IOException e) {
-                    // ignore
-                }
             }
         }
     }

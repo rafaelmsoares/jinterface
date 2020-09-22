@@ -1,7 +1,7 @@
 /*
  * %CopyrightBegin%
  *
- * Copyright Ericsson AB 2000-2009. All Rights Reserved.
+ * Copyright Ericsson AB 2000-2016. All Rights Reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,7 @@ public class OtpErlangRef extends OtpErlangObject {
 
     // old style refs have one 18-bit id
     // r6 "new" refs have array of ids, first one is only 18 bits however
+    // 19 "newer" refs have full 32-bits for creation and for ids[0]
     private int ids[] = null;
 
     /**
@@ -83,8 +84,7 @@ public class OtpErlangRef extends OtpErlangObject {
      *            an arbitrary number. Only the low order 18 bits will be used.
      *
      * @param creation
-     *            another arbitrary number. Only the low order 2 bits will be
-     *            used.
+     *            another arbitrary number.
      */
     public OtpErlangRef(final String node, final int id, final int creation) {
         this.node = node;
@@ -110,10 +110,33 @@ public class OtpErlangRef extends OtpErlangObject {
      *            used.
      */
     public OtpErlangRef(final String node, final int[] ids, final int creation) {
-        this.node = node;
-        this.creation = creation & 0x03; // 2 bits
+	this(OtpExternal.newRefTag, node, ids, creation);
+    }
 
-        // use at most 82 bits (18 + 32 + 32)
+    /**
+     * Create a new(er) style Erlang ref from its components.
+     *
+     * @param tag
+     *            the external format to be compliant with.
+     *            OtpExternal.newRefTag where only a subset of the bits are used (see other constructor)
+     *            OtpExternal.newerRefTag where all bits of ids and creation are used.
+     *            newerPortTag can only be decoded by OTP-19 and newer.
+     *
+     * @param node
+     *            the nodename.
+     *
+     * @param ids
+     *            an array of arbitrary numbers. At most three numbers
+     *            will be read from the array.
+     *
+     * @param creation
+     *            another arbitrary number.
+     */
+    public OtpErlangRef(final int tag, final String node, final int[] ids,
+			final int creation) {
+        this.node = node;
+
+        // use at most 3 words
         int len = ids.length;
         this.ids = new int[3];
         this.ids[0] = 0;
@@ -124,7 +147,17 @@ public class OtpErlangRef extends OtpErlangObject {
             len = 3;
         }
         System.arraycopy(ids, 0, this.ids, 0, len);
-        this.ids[0] &= 0x3ffff; // only 18 significant bits in first number
+	if (tag == OtpExternal.newRefTag) {
+	    this.creation = creation & 0x3;
+	    this.ids[0] &= 0x3ffff; // only 18 significant bits in first number
+	}
+	else {
+	    this.creation = creation;
+	}
+    }
+
+    protected int tag() {
+        return OtpExternal.newerRefTag;
     }
 
     /**
@@ -202,7 +235,7 @@ public class OtpErlangRef extends OtpErlangObject {
      */
     @Override
     public void encode(final OtpOutputStream buf) {
-        buf.write_ref(node, ids, creation);
+        buf.write_ref(this);
     }
 
     /**
